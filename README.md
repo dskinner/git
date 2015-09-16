@@ -50,5 +50,5 @@ hello, world
 
 ## Caveats
 
-* Currently limited to dangling objects
+* Currently limited to loose objects
 * Reader and Writer for tree objects will likely fail on short reads and large content. Straight-forward to fix.
