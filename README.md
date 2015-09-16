@@ -50,4 +50,5 @@ hello, world
 
 ## Caveats
 
-Reader and Writer for tree objects will likely fail on short reads and large content. Straight-forward to fix.
+* Currently limited to dangling objects
+* Reader and Writer for tree objects will likely fail on short reads and large content. Straight-forward to fix.
