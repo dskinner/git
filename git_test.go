@@ -229,3 +229,148 @@ func TestTree(t *testing.T) {
 		t.Fatalf("Writer.Hash() => %q, want %q", w.Hash(), tree)
 	}
 }
+
+func TestMemStore(t *testing.T) {
+	st := MemStore()
+	w := st.Writer()
+
+	data := []byte("hello, world")
+
+	if _, err := w.WriteHeader(Blob, len(data)); err != nil {
+		t.Fatalf("WriteHeader(%s, %v) failed: %s", Blob, len(data), err)
+	}
+	if _, err := w.Write(data); err != nil {
+		t.Fatalf("Write(%#v) failed: %s", data, err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Writer.Close() failed: %s", err)
+	}
+
+	r, err := st.Reader(w.Hash())
+	if err != nil {
+		t.Fatalf("Reader(%s) failed: %s", w.Hash(), err)
+	}
+	buf := new(bytes.Buffer)
+	if _, err := io.Copy(buf, r); err != nil {
+		t.Fatalf("Copy failed: %s", err)
+	}
+	if err := r.Close(); err != nil && err != io.EOF {
+		t.Fatalf("Reader.Close() failed: %s", err)
+	}
+	if !bytes.Equal(buf.Bytes(), data) {
+		t.Fatalf("have %q, want %q", buf.Bytes(), data)
+	}
+}
+
+func BenchmarkMemReader(b *testing.B) {
+	st := MemStore()
+	data := []byte("hello, world")
+	w := st.Writer()
+	if _, err := w.WriteHeader(Blob, len(data)); err != nil {
+		b.Fatal(err)
+	}
+	if _, err := w.Write(data); err != nil {
+		b.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		b.Fatal(err)
+	}
+	hash := w.Hash()
+
+	b.ResetTimer()
+	for n := 0; n < b.N; n++ {
+		buf := new(bytes.Buffer)
+		r, err := st.Reader(hash)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if _, err := io.Copy(buf, r); err != nil {
+			b.Fatal(err)
+		}
+		r.Close()
+	}
+}
+
+func BenchmarkMemWriter(b *testing.B) {
+	st := MemStore()
+	data := []byte("hello, world")
+	r := bytes.NewReader(data)
+	b.ResetTimer()
+	for n := 0; n < b.N; n++ {
+		r.Seek(0, 0)
+		data = append(data, byte('!'))
+
+		w := st.Writer()
+		if _, err := w.WriteHeader(Blob, len(data)); err != nil {
+			b.Fatal(err)
+		}
+		if _, err := w.Write(data); err != nil {
+			b.Fatal(err)
+		}
+		if err := w.Close(); err != nil {
+			b.Fatal(n, err)
+		}
+	}
+}
+
+func BenchmarkDiskReader(b *testing.B) {
+	st := TempStore()
+	defer os.RemoveAll(string(st))
+
+	data := []byte("hello, world")
+
+	w := st.Writer()
+	if _, err := w.WriteHeader(Blob, len(data)); err != nil {
+		b.Fatal(err)
+	}
+	if _, err := w.Write(data); err != nil {
+		b.Fatal(err)
+	}
+	if err := w.Close(); err != nil && err != io.EOF {
+		b.Fatal(err)
+	}
+	hash := w.Hash()
+
+	b.ResetTimer()
+	for n := 0; n < b.N; n++ {
+		buf := new(bytes.Buffer)
+		r, err := st.Reader(hash)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if _, err := io.Copy(buf, r); err != nil {
+			b.Fatal(err)
+		}
+		r.Close()
+	}
+}
+
+func BenchmarkDiskWriter(b *testing.B) {
+	st := TempStore()
+	defer os.RemoveAll(string(st))
+
+	data := []byte("hello, world")
+	r := bytes.NewReader(data)
+	b.ResetTimer()
+	for n := 0; n < b.N; n++ {
+		r.Seek(0, 0)
+		data = append(data, byte('!'))
+
+		w := st.Writer()
+		if _, err := w.WriteHeader(Blob, len(data)); err != nil {
+			b.Fatal(err)
+		}
+		if _, err := w.Write(data); err != nil {
+			b.Fatal(err)
+		}
+		if err := w.Close(); err != nil {
+			b.Fatal(n, err)
+		}
+	}
+}
+
+// func BenchmarkTree(b *testing.B) {
+// for n := 0; n < b.N; n++ {
+
+// }
+// }

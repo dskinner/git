@@ -1,4 +1,9 @@
 // Package git provides an incomplete pure Go implementation of Git core methods.
+//
+// Caveats
+//
+// Only handles loose objects.
+// Will fail on short reads and writes or large content.
 package git // import "dasa.cc/git"
 
 import (

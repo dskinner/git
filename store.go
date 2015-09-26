@@ -1,17 +1,25 @@
 package git
 
 import (
+	"bytes"
+	"errors"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Store is the interface that provides Reader and Writer methods for managing
 // git objects from data storage.
 type Store interface {
+	// Object resolves hash to reader of underlying data. Implemenations must
+	// resolve abbreviated hashes.
+	Object(hash string) (io.Reader, error)
+
 	// Reader initializes a new Reader by the given hash. Implementations need
-	// only to provide a proper io.Reader to Reader.
+	// to resolve abbreviated hashes and provide a proper io.Reader to Reader.
 	Reader(hash string, options ...func(*Reader)) (*Reader, error)
 
 	// Writer initializes a new Writer. Implementations must wrap Writer
@@ -54,19 +62,45 @@ func Dir(x string) string {
 	}
 }
 
-func (st DiskStore) objectPath(hash string) string {
-	return filepath.Join(string(st), "objects", hash[:2], hash[2:])
+// Object resolves hash to reader of underlying data.
+func (st DiskStore) Object(hash string) (io.Reader, error) {
+	d := filepath.Join(string(st), "objects", hash[:2])
+	s := filepath.Join(d, hash[2:])
+	if f, err := os.Open(s); !os.IsNotExist(err) {
+		return f, err
+	}
+	dir, err := os.Open(d)
+	if err != nil {
+		return nil, err
+	}
+	ns, err := dir.Readdirnames(-1)
+	if err != nil {
+		return nil, err
+	}
+	var match string
+	for _, e := range ns {
+		if strings.HasPrefix(e, hash[2:]) {
+			if match != "" {
+				return nil, errors.New("ambigious hash " + hash)
+			}
+			match = e
+		}
+	}
+	if match == "" {
+		return nil, fmt.Errorf("object hash %s does not exist", hash)
+	}
+	return os.Open(filepath.Join(d, match))
 }
 
 // Reader returns a new Reader for the given object hash or error otherwise.
 // The object's type and length are immediately available.
 // Callers must call Reader.Close() when done.
 func (st DiskStore) Reader(hash string, options ...func(*Reader)) (*Reader, error) {
-	f, err := os.Open(st.objectPath(hash))
+	r, err := st.Object(hash)
 	if err != nil {
 		return nil, err
 	}
-	return NewReader(f, options...)
+	return NewReader(r, options...)
 }
 
 // Writer provides a new Writer that buffers data to a temporary file.
@@ -108,7 +142,8 @@ func (g *diskCloser) Close() error {
 	if err := g.Writer.Close(); err != nil {
 		return err
 	}
-	p := g.st.objectPath(g.Writer.Hash())
+	hash := g.Writer.Hash()
+	p := filepath.Join(string(g.st), "objects", hash[:2], hash[2:])
 	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
 		return err
 	}
@@ -131,5 +166,66 @@ func (g *diskCloser) Close() error {
 	g.f.Close()
 	os.Remove(g.f.Name())
 
+	return nil
+}
+
+// MemStore implements Store in-memory. No guarantees are ensured with thread safety
+// as the implementation relies on the uniqueness of SHA1 hash, in so far as a hash
+// collision could break concurrent access.
+func MemStore() Store {
+	m := make(map[string][]byte)
+	return memStore(m)
+}
+
+type memStore map[string][]byte
+
+func (st memStore) Object(hash string) (io.Reader, error) {
+	if b, ok := st[hash]; ok {
+		return bytes.NewReader(b), nil
+	}
+	var match string
+	for k := range st {
+		if strings.HasPrefix(k, hash) {
+			if match != "" {
+				return nil, errors.New("ambigious hash " + hash)
+			}
+			match = k
+		}
+	}
+	if match == "" {
+		return nil, fmt.Errorf("object hash %s does not exist", hash)
+	}
+	return bytes.NewReader(st[match]), nil
+}
+
+func (st memStore) Reader(hash string, options ...func(*Reader)) (*Reader, error) {
+	r, err := st.Object(hash)
+	if err != nil {
+		return nil, err
+	}
+	return NewReader(r, options...)
+}
+
+func (st memStore) Writer() Writer {
+	g := &memCloser{st: st}
+	g.Writer = NewWriter(&g.buf)
+	return g
+}
+
+type memCloser struct {
+	Writer
+	st  memStore
+	buf bytes.Buffer
+}
+
+func (g *memCloser) Close() error {
+	if err := g.Writer.Close(); err != nil {
+		return err
+	}
+	hash := g.Writer.Hash()
+	if _, ok := g.st[hash]; ok {
+		return fmt.Errorf("object with hash %s exists", hash)
+	}
+	g.st[hash] = g.buf.Bytes()
 	return nil
 }
