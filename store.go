@@ -11,8 +11,8 @@ import (
 	"strings"
 )
 
-// Store is the interface that provides Reader and Writer methods for managing
-// git objects from data storage.
+// Store represents a collection of git objects that can be managed. This may
+// be loose objects, a packfile, or even a superset of Stores.
 type Store interface {
 	// Object resolves hash to reader of underlying data. Implemenations must
 	// resolve abbreviated hashes.
